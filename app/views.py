@@ -1,9 +1,10 @@
 from flask import render_template, flash, redirect, url_for, g
 from app import app, db, lm
+from forms import EditForm
 from models import User
 from oauth import OAuthSignIn
-from .forms import LoginForm
 from flask_login import login_user, logout_user, current_user, login_required
+from datetime import datetime
 
 
 @app.route('/')
@@ -28,12 +29,8 @@ def index():
 def login():
     if g.user is not None and g.user.is_authenticated:
         return redirect(url_for('index'))
-    form = LoginForm()
 
-    return render_template(
-        'login.html', title='Sign In',
-        form=form
-    )
+    return render_template('login.html', title='Sign In')
 
 
 @lm.user_loader
@@ -44,6 +41,10 @@ def load_user(id):
 @app.before_request
 def before_request():
     g.user = current_user
+    if g.user.is_authenticated:
+        g.user.last_seen = datetime.utcnow()
+        db.session.add(g.user)
+        db.session.commit()
 
 
 @app.route('/logout')
@@ -76,3 +77,34 @@ def oauth_callback(provider):
         db.session.commit()
     login_user(user, True)
     return redirect(url_for('index'))
+
+
+@app.route('/user/<nickname>')
+@login_required
+def user(nickname):
+    user = User.query.filter_by(nickname=nickname).first()
+    if user is None:
+        flash('User %s not found.' % nickname)
+        return redirect(url_for('index'))
+    posts = [
+        {'author': user, 'body': 'Test post #1'},
+        {'author': user, 'body': 'Test post #2'}
+    ]
+    return render_template('user.html', user=user, posts=posts)
+
+
+@app.route('/edit', methods=['GET', 'POST'])
+@login_required
+def edit():
+    form = EditForm()
+    if form.validate_on_submit():
+        g.user.nickname = form.nickname.data
+        g.user.about_me = form.about_me.data
+        db.session.add(g.user)
+        db.session.commit()
+        flash('Your changes have been saved.')
+        return redirect(url_for('edit'))
+    else:
+        form.nickname.data = g.user.nickname
+        form.about_me.data = g.user.about_me
+    return render_template('edit.html', form=form)
